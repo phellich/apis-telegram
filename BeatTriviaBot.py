@@ -26,6 +26,9 @@ CUDA_AVAILABLE = torch.cuda.is_available()
 
 
 global USER_MESSAGES    # user message history
+global USER_LAST_QUEST 
+global USER_PROGRESSION 
+global USER_DIFFICULTY 
 
 USER_MESSAGES = dict()    # dict of chat/group IDs and their messages
 USER_LAST_QUEST = dict() # dict of user id with the last question
@@ -96,23 +99,32 @@ def prompt_input_text(input_text, user_id):
 
     if USER_PROGRESSION[user_id] == 1: # question
         # input_text = f"Is '{input_text}' the correct answer to the question '{last_quest}'? If yes, congrats the user with a joke related to the question. If no, give him a MCQ with 4 shuffled choices (3 false and 1 true). Don't give the answer."
-        input_text = f"Based on the previously asked question '{last_quest}', create a multiple-choice question with four options: one correct answer and three distractors. Ensure the options are relevant and plausible but clearly distinguishable from the correct answer. Shuffle the options to randomize their order. Do not reveal which option is correct in the response."
+        input_text = f"Based on the previously asked question '{last_quest}', create a multiple-choice question with four options: one correct answer and three distractors. Ensure the options are relevant and plausible but clearly distinguishable from the correct answer. Pose the question and then give the options in a randomize order. Do not reveal which option is correct."
         USER_PROGRESSION[user_id] = 2
+        return input_text
 
     elif USER_PROGRESSION[user_id] == 2: # MCQ
         input_text = f"Is '{input_text}' the correct answer to the question '{last_quest}'? If yes, congratulate the user with a interesting fact related to the theme of the question. If no, provide the correct answer and a brief explanation."
         USER_PROGRESSION[user_id] = 3
+        return input_text
 
     elif USER_PROGRESSION[user_id] == 3: # answer should be given
-        input_text += "Based on the user's input, generate a cultural knowledge question. \
-            If the user specifies a theme from the following: sports, politics, music, art, history, geography, or science. \
-            If no theme is specified, randomly select one of these themes and create a question. \
+        input_text = "User input : " + input_text + "\nBased on the user's input, generate a cultural knowledge question. \
+            If the user specifies a theme from the following: sports, politics, music, science, history, geography, flags, animals or art, tailor the question to that theme. \
+            If no specific theme is mentioned, select one of these themes randomly: sports, politics, music, science, history, geography, flags, animals or art. \
+            Just ask the question and do not precise the theme. \
             Develop a question that delves into that theme, exploring facets such as historical milestones, cultural impacts, pivotal figures, or notable events. \
             To enhance learning and engagement, vary the type of question: it could be a 'true or false', a specific date, a 'yes or no', a number, or a name of a historical figure or an event. "
-
         USER_PROGRESSION[user_id] = 1
-    
-    return input_text
+
+        if USER_DIFFICULTY[user_id] == 1:
+            input_text += "Craft a simple question using basic, commonly known facts."
+        elif USER_DIFFICULTY[user_id] == 2:
+            input_text += "Create a question that needs intermediate, detailed knowledge."
+        elif USER_DIFFICULTY[user_id] == 3:
+            input_text += "Formulate a complex question that requires expert-level insight."
+
+        return input_text
         
 
 # querying LLM
@@ -125,8 +137,6 @@ def query_llm(input_text, user_id):
         USER_MESSAGES[user_id].append({"role": "user", "content": prompted_text})
     else:
         USER_MESSAGES[user_id] = [{"role": "user", "content": prompted_text}]
-
-    pprint(USER_MESSAGES[user_id])
 
     # prompt LLM
     # -- OpenAI
@@ -188,6 +198,48 @@ async def text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(text_response)
 
 
+async def difficulty_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Difficulty level for question."""
+    # button for user to accept or reject the suggestion
+    keyboard = [
+        [
+            InlineKeyboardButton("1 - Beginner", callback_data="1"),  # callback_data has to be string
+            InlineKeyboardButton("2 - Intermediate", callback_data="2"),
+        ],
+        [
+            InlineKeyboardButton("3 - Expert", callback_data="3"),
+            InlineKeyboardButton("None", callback_data="-1"),
+        ],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # get number of words
+    await update.message.reply_text("Difficulty level for your questions?", reply_markup=reply_markup)
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Parses the CallbackQuery and updates the message text."""
+    
+    # set diff
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # update diff
+    USER_DIFFICULTY[user_id] = int(query.data)
+
+    if VERBOSE:
+        print(f"New user difficulty: {USER_DIFFICULTY[user_id]}")
+
+    if user_id in USER_MESSAGES:
+        # respond text through Telegram
+        await query.message.reply_text(f"The question are now level {USER_DIFFICULTY[user_id]}")
+
+
+async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear chat history."""
+    user_id = update.message.from_user.id
+    del USER_MESSAGES[user_id]
+    await update.message.reply_text("Chat history cleared.")
+
 def main() -> None:
     """Start the bot."""
     # Create the Application and pass it your bot's token.
@@ -201,6 +253,10 @@ def main() -> None:
     # text input
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input, block=True))
 
+    # commands
+    application.add_handler(CommandHandler("clear", clear, block=False))
+    application.add_handler(CommandHandler("difficulty_level", difficulty_level))
+    application.add_handler(CallbackQueryHandler(button))
 
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
