@@ -17,8 +17,7 @@ source apis_env/bin/activate
 ```
 
 ## Go check [the bot](https://t.me/BeatTriviaBot) 
-![Bot demo](Bot\ demo.png)
-
+![Bot demo](Bot%20demo.png)
 
 # Telegram bots and APIs, [SLIDES](https://go.epfl.ch/telegram-apis)
 
