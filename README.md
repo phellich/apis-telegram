@@ -1,3 +1,25 @@
+# Our output of the mini-hackaton
+
+## Installation
+
+```bash
+# 1) create and activate virtual environment
+# -- EITHER with conda
+conda create -n apis_env python=3.11
+conda activate apis_env
+# -- OR with venv
+python3.11 -m venv apis_env
+source apis_env/bin/activate
+
+# 2) install dependencies (need of openai, telegram and huggingface keys)
+(apis_env) pip install -r requirements.txt
+(apis_env) pip install openai --update
+```
+
+## Go check [the bot](https://t.me/BeatTriviaBot) 
+![Bot demo](Bot\ demo.png)
+
+
 # Telegram bots and APIs, [SLIDES](https://go.epfl.ch/telegram-apis)
 
 First used at a [mini-hackathon](https://lu.ma/lauzhack-apis-2023) (Nov 11, 2023).
@@ -15,8 +37,9 @@ conda activate apis_env
 python3.11 -m venv apis_env
 source apis_env/bin/activate
 
-# 2) install dependencies
+# 2) install dependencies (need of openai, telegram and huggingface keys)
 (apis_env) pip install -r requirements.txt
+(apis_env) pip install openai --update
 ```
 
 ## Usage 
