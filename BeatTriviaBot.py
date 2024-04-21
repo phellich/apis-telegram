@@ -1,9 +1,8 @@
 """
-Bot to transcribe audio messages using Hugging Face's whisper-large-v3 model.
+Also transcribe audio messages using Hugging Face's whisper-large-v3 model.
 
 ```python
 python BeatTriviaBot.py
-```
 ```
 
 Press Ctrl-C on the command line to stop the bot.
@@ -28,12 +27,14 @@ CUDA_AVAILABLE = torch.cuda.is_available()
 global USER_MESSAGES    # user message history
 global USER_LAST_QUEST 
 global USER_PROGRESSION 
-global USER_DIFFICULTY 
+global USER_DIFFICULTY
+DEFAULT_TRIVIA_INTERVAL = 15
 
 USER_MESSAGES = dict()    # dict of chat/group IDs and their messages
 USER_LAST_QUEST = dict() # dict of user id with the last question
 USER_PROGRESSION = dict() # dict of user id with the last step # 1 is question, 2 is MCQ, 3 is anwer
 USER_DIFFICULTY = dict() 
+USER_RESULTS = dict()
 
 headers = {"Authorization": f"Bearer {HUGGING_FACE_KEY}"}
 
@@ -123,9 +124,15 @@ def prompt_input_text(input_text, user_id):
             input_text += "Create a question that needs intermediate, detailed knowledge."
         elif USER_DIFFICULTY[user_id] == 3:
             input_text += "Formulate a complex question that requires expert-level insight."
+        elif USER_DIFFICULTY[user_id] == 4:
+            input_text += "Formulate a near-impossible question that requires god-level insight."
 
         return input_text
         
+class Score:
+  def __init__(self, score, totalQuestions):
+    self.score = score
+    self.totalQuestions = totalQuestions
 
 # querying LLM
 def query_llm(input_text, user_id):
@@ -146,6 +153,17 @@ def query_llm(input_text, user_id):
     )
     text_response = response.choices[0].message.content
     
+    
+    if not user_id in USER_RESULTS:
+        USER_RESULTS[user_id] = Score(0, 0)
+
+    if text_response.startswith("Yes"):
+        USER_RESULTS[user_id].score += 1
+        USER_RESULTS[user_id].totalQuestions += 1
+        text_response += f"\n Your current score is {USER_RESULTS[user_id].score}, and you have answered {USER_RESULTS[user_id].totalQuestions} question!"
+    elif text_response.startswith("No"):
+        USER_RESULTS[user_id].totalQuestions += 1
+
     # update message history
     USER_MESSAGES[user_id].append({"role": "assistant", "content": text_response})
     if USER_PROGRESSION[user_id] == 1:
@@ -160,6 +178,8 @@ def query_llm(input_text, user_id):
         USER_MESSAGES[user_id].pop(0)
         # remove question
         USER_MESSAGES[user_id].pop(0)
+
+    
 
     return text_response
 
@@ -193,10 +213,66 @@ async def text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     input_text = update.message.text
     user_id = update.message.from_user.id
     text_response = query_llm(input_text, user_id)
-
+    
     # respond text through Telegram
     await update.message.reply_text(text_response)
 
+async def askQuestion(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Ask the question."""
+    job = context.job
+    input_text = ""
+    user_id = job.chat_id
+    if not (user_id in USER_PROGRESSION) or (USER_PROGRESSION[user_id] != 1 and USER_PROGRESSION[user_id] != 2):
+        USER_PROGRESSION[user_id] = 3
+        text_response = "Hey, it's time for your daily trivia question! \n"
+        text_response += query_llm(input_text, user_id)
+
+        # respond text through Telegram
+        await context.bot.send_message(job.chat_id, text=text_response)
+
+def remove_job_if_exists(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Remove job with given name. Returns whether job was removed."""
+    current_jobs = context.job_queue.get_jobs_by_name(name)
+    if not current_jobs:
+        return False
+    for job in current_jobs:
+        job.schedule_removal()
+    return True
+
+async def enable_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add a job to the queue."""
+    interval = 0
+    chat_id = update.effective_message.chat_id
+    if(context.args == list()):
+        await update.message.reply_text("Using default interval")
+        # interval = await update.message
+        interval = DEFAULT_TRIVIA_INTERVAL
+    try:
+        # args[0] should contain the time for the timer in seconds
+        if(interval == 0):
+            interval = float(context.args[0])
+        if interval < 0:
+            await update.effective_message.reply_text("Sorry, negative second intervals are hard")
+            return
+
+        job_removed = remove_job_if_exists(str(chat_id), context)
+        context.job_queue.run_repeating(askQuestion, interval, chat_id=chat_id, name=str(chat_id), data=interval)
+
+        text = "Trivia enabled!"
+        if job_removed:
+            text = "Trivia already enabled!"
+        
+        await update.effective_message.reply_text(text)
+
+    except (IndexError, ValueError):
+        await update.effective_message.reply_text("Usage: /enable_trivia <interval> (in seconds)")
+
+async def disable_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove the repeating trivia option."""
+    chat_id = update.message.chat_id
+    job_removed = remove_job_if_exists(str(chat_id), context)
+    text = "Trivia disabled" if job_removed else "Trivia wasn't enabled"
+    await update.message.reply_text(text)
 
 async def difficulty_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Difficulty level for question."""
@@ -208,7 +284,7 @@ async def difficulty_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ],
         [
             InlineKeyboardButton("3 - Expert", callback_data="3"),
-            InlineKeyboardButton("None", callback_data="-1"),
+            InlineKeyboardButton("4 - Simply GOD", callback_data="4"),
         ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -253,6 +329,9 @@ def main() -> None:
     # text input
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input, block=True))
 
+    # Command input
+    application.add_handler(CommandHandler("enable_trivia", enable_trivia))
+    application.add_handler(CommandHandler("disable_trivia", disable_trivia))
     # commands
     application.add_handler(CommandHandler("clear", clear, block=False))
     application.add_handler(CommandHandler("difficulty_level", difficulty_level))
